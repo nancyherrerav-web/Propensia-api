@@ -7,7 +7,10 @@ import joblib
 import json
 from datetime import datetime
 
-app = FastAPI(title="Propensia API")
+app = FastAPI(
+    title="Propensia API",
+    servers=[{"url": "https://propensia-api.onrender.com"}]
+)
 
 modelo = joblib.load("modelo_propensia.pkl")
 encoders = joblib.load("encoders_propensia.pkl")
