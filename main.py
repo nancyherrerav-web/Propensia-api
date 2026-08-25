@@ -4,6 +4,7 @@ from typing import Optional
 import sqlite3
 import pandas as pd
 import joblib
+import json
 from datetime import datetime
 
 app = FastAPI(title="Propensia API")
@@ -12,8 +13,10 @@ modelo = joblib.load("modelo_propensia.pkl")
 encoders = joblib.load("encoders_propensia.pkl")
 columnas = joblib.load("columnas_modelo.pkl")
 
+DB_PATH = "propensia.db"
+
 def get_conn():
-    return sqlite3.connect("propensia.db")
+    return sqlite3.connect(DB_PATH)
 
 @app.get("/")
 def home():
@@ -99,53 +102,3 @@ def registrar_oferta(datos: Registro):
 def historial_cliente(cliente_id: str):
     conn = get_conn()
     df = pd.read_sql("SELECT * FROM registros WHERE cliente_id = ? ORDER BY fecha DESC", conn, params=(cliente_id,))
-    conn.close()
-    return df.to_dict(orient="records")
-
-# 5. AGREGAR O ACTUALIZAR CLIENTE
-class Cliente(BaseModel):
-    cliente_id: str
-    tipo_cliente: str
-    antiguedad_meses: int
-    monto_facturado_prom: float
-    consumo_datos_gb_prom: float
-    dias_mora_prom: float
-    meses_moroso: int
-    n_reclamos: int
-    elegible_mt: bool
-    es_movistar_total: bool = False
-    canal_mas_usado: str
-
-@app.post("/agregar_o_actualizar_cliente")
-def agregar_o_actualizar_cliente(datos: Cliente):
-    conn = get_conn()
-    conn.execute("DELETE FROM clientes WHERE cliente_id = ?", (datos.cliente_id,))
-    conn.execute("""
-        INSERT INTO clientes (cliente_id, tipo_cliente, antiguedad_meses, monto_facturado_prom,
-        consumo_datos_gb_prom, dias_mora_prom, meses_moroso, n_reclamos, elegible_mt, es_movistar_total, canal_mas_usado)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (datos.cliente_id, datos.tipo_cliente, datos.antiguedad_meses, datos.monto_facturado_prom,
-          datos.consumo_datos_gb_prom, datos.dias_mora_prom, datos.meses_moroso, datos.n_reclamos,
-          datos.elegible_mt, datos.es_movistar_total, datos.canal_mas_usado))
-    conn.commit()
-    conn.close()
-    return {"status": "cliente guardado", "cliente_id": datos.cliente_id}
-
-# 6. ESTADÍSTICAS GENERALES (para el panel del dashboard)
-@app.get("/estadisticas_generales")
-def estadisticas_generales():
-    conn = get_conn()
-    clientes_df = pd.read_sql("SELECT * FROM clientes", conn)
-    campanias_df = pd.read_sql("SELECT * FROM campanias WHERE contactabilidad = 'contactado'", conn)
-    conn.close()
-
-    total_elegibles_mt = int(((clientes_df['elegible_mt']==True) & (clientes_df['es_movistar_total']==False)).sum())
-    tasa_mt = campanias_df[campanias_df['oferta_es_mt']==True]['resultado'].value_counts(normalize=True).get('aceptada', 0)
-    tasa_otros = campanias_df[campanias_df['oferta_es_mt']==False]['resultado'].value_counts(normalize=True).get('aceptada', 0)
-
-    return {
-        "total_clientes": len(clientes_df),
-        "elegibles_mt_sin_mt": total_elegibles_mt,
-        "tasa_aceptacion_mt": round(float(tasa_mt)*100, 1),
-        "tasa_aceptacion_otras": round(float(tasa_otros)*100, 1),
-    }
