@@ -1,0 +1,22 @@
+{
+  "total_clientes": 100000,
+  "elegibles_mt_sin_mt": 13650,
+  "porcentaje_elegibles": 13.65,
+  "tasa_aceptacion_mt": 69.7,
+  "tasa_aceptacion_otras": 34.1,
+  "tasa_aceptacion_rebate": 0.0,
+  "total_ofrecimientos_historicos": 300112,
+  "precision_modelo": 66.2,
+  "sesgo_por_tipo_cliente": {
+    "postpago": 0.244,
+    "prepago": 0.0
+  },
+  "sesgo_por_edad": {
+    "18-25": 0.138,
+    "26-35": 0.139,
+    "36-45": 0.135,
+    "46-55": 0.134,
+    "56-65": 0.137,
+    "65+": 0.134
+  }
+}
