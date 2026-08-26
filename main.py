@@ -1,7 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import os
 import pandas as pd
 import joblib
 import json
@@ -16,10 +18,10 @@ modelo = joblib.load("modelo_propensia.pkl")
 encoders = joblib.load("encoders_propensia.pkl")
 columnas = joblib.load("columnas_modelo.pkl")
 
-DB_PATH = "propensia.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://usuario:password@host:5432/nombre_db")
 
 def get_conn():
-    return sqlite3.connect(DB_PATH)
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
 
 @app.get("/")
 def home():
@@ -29,17 +31,17 @@ def home():
 @app.get("/consultar_cliente/{cliente_id}")
 def consultar_cliente(cliente_id: str):
     conn = get_conn()
-    df = pd.read_sql("SELECT * FROM clientes WHERE cliente_id = ?", conn, params=(cliente_id,))
+    df = pd.read_sql("SELECT * FROM clientes WHERE cliente_id = %s", conn, params=(cliente_id,))
     conn.close()
     if df.empty:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     return df.to_dict(orient="records")[0]
 
-# 2. CONSULTAR OFERTAS (ranking del modelo, top 5) — versión optimizada en batch
+# 2. CONSULTAR OFERTAS
 @app.get("/consultar_ofertas/{cliente_id}")
 def consultar_ofertas(cliente_id: str):
     conn = get_conn()
-    cliente_df = pd.read_sql("SELECT * FROM clientes WHERE cliente_id = ?", conn, params=(cliente_id,))
+    cliente_df = pd.read_sql("SELECT * FROM clientes WHERE cliente_id = %s", conn, params=(cliente_id,))
     ofertas_df = pd.read_sql("SELECT * FROM ofertas", conn)
     conn.close()
     if cliente_df.empty:
@@ -89,30 +91,32 @@ def consultar_ofertas(cliente_id: str):
     resultados = sorted(resultados, key=lambda x: -x['probabilidad'])[:5]
     return {"cliente_id": cliente_id, "top_ofertas": resultados}
 
-# 3. REGISTRAR OFERTA (ofrecida / aceptada / rechazada)
+# 3. REGISTRAR OFERTA
 class Registro(BaseModel):
     cliente_id: str
     oferta_recomendada: str
     probabilidad: float
-    estado: str  # "ofrecida", "aceptada" o "rechazada"
+    estado: str
     motivo_rechazo: Optional[str] = None
 
 @app.post("/registrar_oferta")
 def registrar_oferta(datos: Registro):
     conn = get_conn()
-    conn.execute(
-        "INSERT INTO registros (cliente_id, oferta_recomendada, probabilidad, estado, motivo_rechazo, fecha) VALUES (?, ?, ?, ?, ?, ?)",
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO registros (cliente_id, oferta_recomendada, probabilidad, estado, motivo_rechazo, fecha) VALUES (%s, %s, %s, %s, %s, %s)",
         (datos.cliente_id, datos.oferta_recomendada, datos.probabilidad, datos.estado, datos.motivo_rechazo, str(datetime.now()))
     )
     conn.commit()
+    cur.close()
     conn.close()
     return {"status": "registrado"}
 
-# 4. HISTORIAL DE UN CLIENTE (para ver qué se le ofreció antes)
+# 4. HISTORIAL DE UN CLIENTE
 @app.get("/historial_cliente/{cliente_id}")
 def historial_cliente(cliente_id: str):
     conn = get_conn()
-    df = pd.read_sql("SELECT * FROM registros WHERE cliente_id = ? ORDER BY fecha DESC", conn, params=(cliente_id,))
+    df = pd.read_sql("SELECT * FROM registros WHERE cliente_id = %s ORDER BY fecha DESC", conn, params=(cliente_id,))
     conn.close()
     return df.to_dict(orient="records")
 
@@ -133,19 +137,21 @@ class Cliente(BaseModel):
 @app.post("/agregar_o_actualizar_cliente")
 def agregar_o_actualizar_cliente(datos: Cliente):
     conn = get_conn()
-    conn.execute("DELETE FROM clientes WHERE cliente_id = ?", (datos.cliente_id,))
-    conn.execute("""
+    cur = conn.cursor()
+    cur.execute("DELETE FROM clientes WHERE cliente_id = %s", (datos.cliente_id,))
+    cur.execute("""
         INSERT INTO clientes (cliente_id, tipo_cliente, antiguedad_meses, monto_facturado_prom,
         consumo_datos_gb_prom, dias_mora_prom, meses_moroso, n_reclamos, elegible_mt, es_movistar_total, canal_mas_usado)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (datos.cliente_id, datos.tipo_cliente, datos.antiguedad_meses, datos.monto_facturado_prom,
           datos.consumo_datos_gb_prom, datos.dias_mora_prom, datos.meses_moroso, datos.n_reclamos,
           datos.elegible_mt, datos.es_movistar_total, datos.canal_mas_usado))
     conn.commit()
+    cur.close()
     conn.close()
     return {"status": "cliente guardado", "cliente_id": datos.cliente_id}
 
-# 6. ESTADÍSTICAS GENERALES (lee el archivo real, calculado desde los datos completos)
+# 6. ESTADÍSTICAS GENERALES
 @app.get("/estadisticas_generales")
 def estadisticas_generales():
     with open("estadisticas.json", "r", encoding="utf-8") as f:
