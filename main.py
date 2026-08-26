@@ -1,9 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import os
+import sqlite3
 import pandas as pd
 import joblib
 import json
@@ -13,16 +11,17 @@ app = FastAPI(
     title="Propensia API",
     servers=[{"url": "https://propensia-api.onrender.com"}]
 )
+
 modelo = joblib.load("modelo_propensia.pkl")
 encoders = joblib.load("encoders_propensia.pkl")
 columnas = joblib.load("columnas_modelo.pkl")
+
 DB_PATH = "propensia.db"
 
 def get_conn():
     return sqlite3.connect(DB_PATH)
 
 @app.get("/")
-
 def home():
     return {"status": "Propensia API funcionando"}
 
@@ -43,14 +42,12 @@ def consultar_ofertas(cliente_id: str):
     cliente_df = pd.read_sql("SELECT * FROM clientes WHERE cliente_id = ?", conn, params=(cliente_id,))
     ofertas_df = pd.read_sql("SELECT * FROM ofertas", conn)
     conn.close()
-
     if cliente_df.empty:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     cliente = cliente_df.iloc[0]
 
     filas = []
     info_ofertas = []
-
     for _, oferta in ofertas_df.iterrows():
         fila = {
             'antiguedad_meses': cliente['antiguedad_meses'],
@@ -63,7 +60,6 @@ def consultar_ofertas(cliente_id: str):
             'gb_incluidos': oferta['gb_incluidos'],
             'ahorro_pct': oferta['ahorro_pct'],
         }
-
         for col, enc in encoders.items():
             valor = None
             if col == 'tipo_cliente': valor = str(cliente['tipo_cliente'])
@@ -85,7 +81,6 @@ def consultar_ofertas(cliente_id: str):
     probs = modelo.predict_proba(X_batch)[:, 1]
 
     resultados = []
-
     for i in range(len(info_ofertas)):
         item = info_ofertas[i]
         item["probabilidad"] = round(float(probs[i]), 3)
@@ -103,7 +98,6 @@ class Registro(BaseModel):
     motivo_rechazo: Optional[str] = None
 
 @app.post("/registrar_oferta")
-
 def registrar_oferta(datos: Registro):
     conn = get_conn()
     conn.execute(
@@ -137,7 +131,6 @@ class Cliente(BaseModel):
     canal_mas_usado: str
 
 @app.post("/agregar_o_actualizar_cliente")
-
 def agregar_o_actualizar_cliente(datos: Cliente):
     conn = get_conn()
     conn.execute("DELETE FROM clientes WHERE cliente_id = ?", (datos.cliente_id,))
@@ -154,8 +147,6 @@ def agregar_o_actualizar_cliente(datos: Cliente):
 
 # 6. ESTADÍSTICAS GENERALES (lee el archivo real, calculado desde los datos completos)
 @app.get("/estadisticas_generales")
-
 def estadisticas_generales():
     with open("estadisticas.json", "r", encoding="utf-8") as f:
-        return json.load(f) 
-
+        return json.load(f)
